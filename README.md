@@ -1,155 +1,200 @@
-# SimFi Rewards Engine - Final Merged Version
+SimFi Rewards Engine
 
-## Summary
+Automated fee-claiming and rewards distribution engine for SimFi token launches on Bags.fm.
 
-This rewards engine:
-- Runs at the end of each **leaderboard period** (aligned with your existing periods)
-- Claims Bags.fm creator fees for your token
-- Allocates **REWARDS_POOL_BPS%** (default 50%) to rewards, rest to treasury
-- Pays top 3 wallets by profit: **50% / 30% / 20%**
-- Is crash-safe with transactional state management
+This module claims creator fees from Bags.fm, allocates a configurable portion to a rewards pool, and automatically distributes rewards to top traders on the SimFi leaderboard at the end of each period.
 
-## Files
+Designed for correctness, crash safety, and real-money payouts.
 
-| File | Location | Description |
-|------|----------|-------------|
-| `add_rewards_tables.sql` | `migrations/` | Database migration |
-| `schema_patch.ts` | N/A | Add to your existing `shared/schema.ts` |
-| `bagsService.ts` | `server/services/` | Bags SDK + Solana vault |
-| `rewardsEngine.ts` | `server/services/` | Core engine |
-| `rewardsRoutes.ts` | `server/services/` | API endpoints |
-| `.env.rewards.example` | Root | Environment variables |
+What This Does
 
-## Integration Steps
+At the end of each leaderboard period, the Rewards Engine:
 
-### 1. Install Dependencies
+Claims creator fees for the SimFi token from Bags.fm
 
-```bash
+Allocates REWARDS_POOL_BPS% of the claimed fees to rewards (default: 50%)
+
+Keeps the remaining fees as treasury (tracked explicitly)
+
+Pays the top 3 wallets by profit on the leaderboard:
+
+1st place: 50%
+
+2nd place: 30%
+
+3rd place: 20%
+
+Ensures payouts are atomic, idempotent, and crash-safe
+
+The engine runs automatically on a fixed schedule and can also be triggered manually by an admin.
+
+Key Properties
+
+Leaderboard-aligned
+Rewards are strictly tied to existing leaderboard periods. No custom epochs, no drift between UI and payouts.
+
+Wallet-based rewards
+Winners are selected by wallet address. A wallet can only win once per period.
+
+Treasury-safe
+Only a configurable percentage of fees is ever paid out. Treasury balances are tracked separately and never accidentally distributed.
+
+Crash-safe & idempotent
+All state transitions are transactional. If the process crashes mid-cycle, it recovers safely without double-paying.
+
+Single-leader execution
+Uses PostgreSQL advisory locks to ensure only one instance performs payouts.
+
+Repository Contents
+File	Location	Description
+add_rewards_tables.sql	migrations/	Database schema for rewards state, epochs, and winners
+schema_patch.ts	—	Patch to apply to existing shared/schema.ts
+bagsService.ts	server/services/	Bags SDK integration and Solana vault logic
+rewardsEngine.ts	server/services/	Core rewards engine
+rewardsRoutes.ts	server/services/	REST API endpoints
+.env.rewards.example	root	Environment configuration
+Architecture Overview
+Leaderboard Period Ends
+        ↓
+Check if already processed
+        ↓
+Create rewards_epoch linked to leaderboard_period
+        ↓
+CLAIM PHASE
+  - Read vault balance (before)
+  - Claim Bags fees
+  - Read vault balance (after)
+  - Compute total inflow
+  - Split into rewards + treasury
+        ↓
+DECISION PHASE (transactional)
+  - Load unpaid carry
+  - Compute total rewards pot
+  - Select top 3 wallets by profit
+  - If not eligible → carry forward
+  - If insufficient vault balance → carry forward
+  - Else → build payout plan and mark "paying"
+        ↓
+PAYOUT PHASE
+  - Single Solana transaction with 3 transfers
+  - On success → finalize and persist winners
+  - On failure → restore carry and mark failed
+        ↓
+Update last processed leaderboard period
+
+Installation & Integration
+1. Install Dependencies
 npm install @bagsfm/bags-sdk bs58
-```
 
-### 2. Run Migration
-
-```bash
+2. Run Database Migration
 psql $DATABASE_URL -f migrations/add_rewards_tables.sql
-```
 
-### 3. Patch Schema
+3. Patch Schema
 
-Add the contents of `schema_patch.ts` to your `shared/schema.ts`:
-- Ensure `jsonb` is imported from `drizzle-orm/pg-core`
-- Add the tables after `telegramSessions`
-- Add the type exports at the end
+Apply schema_patch.ts to your existing shared/schema.ts:
 
-### 4. Add Service Files
+Import jsonb from drizzle-orm/pg-core
 
-Copy to `server/services/`:
-- `bagsService.ts`
-- `rewardsEngine.ts`
-- `rewardsRoutes.ts`
+Add rewards tables after telegramSessions
 
-### 5. Verify Integration
+Add the exported reward types at the end
 
-Your `routes.ts` should already have:
-```typescript
-import { registerRewardsRoutes } from "./services/rewardsRoutes";
-import { rewardsEngine } from "./services/rewardsEngine";
+4. Add Service Files
 
-// ... at the end of registerRoutes():
-registerRewardsRoutes(app);
+Copy the following files into your backend:
+
+server/services/bagsService.ts
+server/services/rewardsEngine.ts
+server/services/rewardsRoutes.ts
+
+5. Wire the Engine
+
+In routes.ts:
+
+app.use("/api/rewards", rewardsRouter);
+
+
+In index.ts (after app initialization):
+
 rewardsEngine.start();
-```
 
-### 6. Set Environment Variables
+6. Configure Environment Variables
 
-See `.env.rewards.example` for all options.
+See .env.rewards.example.
 
 Required:
-- `BAGS_API_KEY`
-- `SOLANA_RPC_URL`
-- `REWARDS_VAULT_PRIVATE_KEY`
-- `REWARDS_TOKEN_MINT`
 
-### 7. Fund Vault
+BAGS_API_KEY
 
-Send some SOL to the vault wallet for transaction fees and initial liquidity.
+SOLANA_RPC_URL
 
-## API Endpoints
+REWARDS_VAULT_PRIVATE_KEY (base58)
 
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/api/rewards/status` | GET | None | Current status, vault, carry |
-| `/api/rewards/history` | GET | None | Past epochs with winners |
-| `/api/rewards/rules` | GET | None | Config and rules |
-| `/api/rewards/run` | POST | Admin | Manual trigger |
-| `/api/rewards/leader` | GET | None | Is this instance leader? |
+REWARDS_TOKEN_MINT
 
-## How It Works
+Optional:
 
-```
-Leaderboard period ends
-         ↓
-Check if already processed
-         ↓
-Create rewards_epoch linked to period
-         ↓
-CLAIM PHASE:
-  - Record beforeBalance
-  - Call Bags SDK to claim fees
-  - Record afterBalance
-  - Calculate totalInflow = after - before
-  - rewardInflow = totalInflow × REWARDS_POOL_BPS / 10000
-  - treasuryInflow = totalInflow - rewardInflow
-         ↓
-DECIDE PHASE (in transaction):
-  - Get carry from state
-  - totalPot = carry + rewardInflow
-  - Get top 3 wallets by profit
-  - If < 3 eligible: skip, add pot to carry
-  - If vault < pot + reserve: skip, add pot to carry
-  - Otherwise: build plan, zero carry, mark "paying"
-         ↓
-PAYOUT PHASE:
-  - Send single tx with 3 transfers
-  - On success: finalize, insert winners
-  - On failure: restore carry, mark failed
-         ↓
-Update lastProcessedPeriodId
-```
+REWARDS_POOL_BPS (default: 5000 = 50%)
 
-## Key Design Decisions
+REWARDS_MIN_TRADES
 
-1. **Epochs keyed by `leaderboard_period_id`** - aligns rewards with your existing periods
-2. **50% default to rewards** - configurable via `REWARDS_POOL_BPS`
-3. **Treasury tracking** - `treasury_accrued_lamports` shows total kept
-4. **Sequential processing** - only process next unprocessed period
-5. **Crash recovery** - stuck epochs auto-recovered after 15 min
-6. **Wallet-based uniqueness** - prevents same wallet winning twice per epoch
+REWARDS_VAULT_RESERVE_SOL
 
-## Testing
+REWARDS_ADMIN_SECRET
 
-```bash
-# Enable dry run
+7. Fund the Vault
+
+Send SOL to the rewards vault wallet to cover:
+
+Transaction fees
+
+Initial payout liquidity
+
+API Endpoints
+Endpoint	Method	Auth	Description
+/api/rewards/status	GET	None	Engine status, vault balance, carry
+/api/rewards/history	GET	None	Past reward epochs and winners
+/api/rewards/run	POST	Admin	Manually trigger processing
+Testing & Local Use
+# Optional: dry run (no on-chain payouts)
 export REWARDS_DRY_RUN=1
 
-# Start server
 npm run dev
 
-# Check status
+
+Check status:
+
 curl http://localhost:5000/api/rewards/status
 
-# Manual trigger
+
+Manual run:
+
 curl -X POST http://localhost:5000/api/rewards/run \
-  -H "x-admin-secret: YOUR_SECRET"
+  -H "x-rewards-secret: YOUR_SECRET"
 
-# Check history
-curl http://localhost:5000/api/rewards/history
-```
-
-## Monitoring
+Operational Notes
 
 Watch for:
-- `carryRewardsLamports` growing (periods being skipped)
-- `status: "failed"` epochs
-- `isLeader: false` when you expect it to be true
-- Low vault balance
+
+Growing carryRewardsLamports (periods skipped due to low activity)
+
+Epochs with status = failed
+
+isLeader = false on all instances (lock misconfiguration)
+
+Low vault balance preventing payouts
+
+Why This Matters (Hackathon Context)
+
+This engine turns SimFi paper trading into real economic alignment:
+
+Traders compete risk-free
+
+Top performers earn real SOL rewards
+
+Rewards are funded directly from token launch fees
+
+No manual intervention, no trust assumptions
+
+It demonstrates a full loop:
+user activity → protocol revenue → automated, transparent redistribution
