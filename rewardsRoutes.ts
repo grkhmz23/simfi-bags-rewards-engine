@@ -1,7 +1,3 @@
-/**
- * Rewards API Routes
- */
-
 import { Router, Request, Response } from "express";
 import { rewardsEngine } from "./rewardsEngine";
 

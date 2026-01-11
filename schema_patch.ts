@@ -1,18 +1,3 @@
-// =============================================================================
-// SCHEMA PATCH: Add these to your existing shared/schema.ts
-// =============================================================================
-// 
-// 1. Ensure your import includes 'jsonb':
-//    import { pgTable, text, varchar, bigint, integer, timestamp, unique, jsonb } from "drizzle-orm/pg-core";
-//
-// 2. Add this block AFTER your telegramSessions table definition
-// 3. Add the type exports at the end with your other exports
-// =============================================================================
-
-// -----------------------------------------------------------------------------
-// Rewards Engine Types
-// -----------------------------------------------------------------------------
-
 export type PayoutPlanEntry = {
   rank: 1 | 2 | 3;
   wallet: string;
@@ -21,10 +6,6 @@ export type PayoutPlanEntry = {
   profitLamports?: string;
   tradeCount?: number;
 };
-
-// -----------------------------------------------------------------------------
-// Rewards Engine Tables
-// -----------------------------------------------------------------------------
 
 export const rewardsState = pgTable("rewards_state", {
   id: integer("id").primaryKey().default(1),
@@ -93,10 +74,6 @@ export const rewardsWinners = pgTable("rewards_winners", {
   epochRankUnique: unique("rewards_winners_epoch_rank_unique").on(t.epochId, t.rank),
   epochWalletUnique: unique("rewards_winners_epoch_wallet_unique").on(t.epochId, t.walletAddress),
 }));
-
-// -----------------------------------------------------------------------------
-// Add these type exports at the end of your schema.ts
-// -----------------------------------------------------------------------------
 
 export type RewardsState = typeof rewardsState.$inferSelect;
 export type RewardsEpoch = typeof rewardsEpochs.$inferSelect;

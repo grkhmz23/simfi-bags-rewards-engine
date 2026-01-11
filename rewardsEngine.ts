@@ -1,17 +1,3 @@
-/**
- * SimFi Rewards Engine (FINAL MERGED VERSION)
- * 
- * Design:
- * - Epochs are keyed by leaderboard_period_id (aligns with existing periods)
- * - Only REWARDS_POOL_BPS% of claimed fees go to rewards (default 50%)
- * - Treasury share tracked separately
- * - All state changes in db.transaction() for crash safety
- * - Sequential processing (one period at a time)
- * - Advisory lock with explicit unlock
- * 
- * Payout split: 1st 50%, 2nd 30%, 3rd 20% of rewards pot
- */
-
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { and, desc, eq, inArray, lte, sql, lt, or } from "drizzle-orm";

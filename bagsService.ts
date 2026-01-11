@@ -1,13 +1,3 @@
-/**
- * Bags + Solana Vault Service for SimFi Rewards
- * 
- * Responsibilities:
- * - Claim creator fees for a single token mint using Bags SDK
- * - Provide vault balance helpers
- * - Execute atomic payout transactions (up to 3 transfers)
- * - Verify transaction confirmations for crash recovery
- */
-
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import bs58 from "bs58";
 
